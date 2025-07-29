@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ecosystem Evolution Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        canvas {
+            background-color: #f0fdf4; /* A light green for the background */
+            border: 1px solid #d1d5db; /* A light gray border */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center mb-4 text-green-700">Virtual Ecosystem Evolution</h1>
+        <p class="text-center mb-6 max-w-2xl mx-auto">
+            This simulation models a simple ecosystem with two species: Herbivores (blue) and Carnivores (red). Herbivores eat plants (green) to survive, while Carnivores hunt Herbivores. Watch how populations change and interact over time.
+        </p>
+
+        <!-- Controls -->
+        <div class="flex flex-wrap justify-center items-center gap-4 mb-6 bg-white p-4 rounded-lg shadow-md">
+            <div class="flex flex-col items-center">
+                <label for="herbivore-slider" class="text-sm font-medium">Initial Herbivores: <span id="herbivore-count">50</span></label>
+                <input id="herbivore-slider" type="range" min="1" max="100" value="50" class="w-48">
+            </div>
+            <div class="flex flex-col items-center">
+                <label for="carnivore-slider" class="text-sm font-medium">Initial Carnivores: <span id="carnivore-count">10</span></label>
+                <input id="carnivore-slider" type="range" min="1" max="50" value="10" class="w-48">
+            </div>
+            <div class="flex flex-col items-center">
+                <label for="plant-slider" class="text-sm font-medium">Plant Spawn Rate: <span id="plant-rate">50</span></label>
+                <input id="plant-slider" type="range" min="10" max="100" value="50" class="w-48">
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="start-button" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Start</button>
+                <button id="pause-button" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition-colors" disabled>Pause</button>
+                <button id="reset-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">Reset</button>
+            </div>
+        </div>
+
+        <!-- Simulation Canvas -->
+        <div class="w-full max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
+            <canvas id="ecosystem-canvas"></canvas>
+        </div>
+        
+        <!-- Chart -->
+        <div class="w-full max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden mt-6">
+            <canvas id="population-chart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Get canvas and context
+        const canvas = document.getElementById('ecosystem-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas dimensions
+        const canvasWidth = 896; // A common multiple for grid systems
+        const canvasHeight = 512;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        // Simulation state
+        let simulationRunning = false;
+        let animationFrameId;
+        let creatures = [];
+        let plants = [];
+        let time = 0;
+
+        // Chart setup
+        const chartCanvas = document.getElementById('population-chart');
+        const chartCtx = chartCanvas.getContext('2d');
+        const populationChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Herbivores',
+                        data: [],
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Carnivores',
+                        data: [],
+                        borderColor: 'rgba(239, 68, 68, 1)',
+                        backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Time' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Population' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // UI Elements
+        const herbivoreSlider = document.getElementById('herbivore-slider');
+        const carnivoreSlider = document.getElementById('carnivore-slider');
+        const plantSlider = document.getElementById('plant-slider');
+        const herbivoreCountSpan = document.getElementById('herbivore-count');
+        const carnivoreCountSpan = document.getElementById('carnivore-count');
+        const plantRateSpan = document.getElementById('plant-rate');
+        const startButton = document.getElementById('start-button');
+        const pauseButton = document.getElementById('pause-button');
+        const resetButton = document.getElementById('reset-button');
+
+        // Update slider displays
+        herbivoreSlider.addEventListener('input', () => herbivoreCountSpan.textContent = herbivoreSlider.value);
+        carnivoreSlider.addEventListener('input', () => carnivoreCountSpan.textContent = carnivoreSlider.value);
+        plantSlider.addEventListener('input', () => plantRateSpan.textContent = plantSlider.value);
+
+        // --- Core Classes ---
+
+        class Creature {
+            constructor(x, y, species) {
+                this.x = x;
+                this.y = y;
+                this.species = species;
+                this.energy = 100;
+                this.age = 0;
+
+                if (this.species === 'herbivore') {
+                    this.color = 'rgba(59, 130, 246, 0.8)'; // Blue
+                    this.speed = 2;
+                    this.size = 5;
+                    this.senseRadius = 50;
+                    this.reproductionThreshold = 150;
+                } else { // carnivore
+                    this.color = 'rgba(239, 68, 68, 0.8)'; // Red
+                    this.speed = 2.5;
+                    this.size = 7;
+                    this.senseRadius = 100;
+                    this.reproductionThreshold = 200;
+                }
+            }
+
+            move(target) {
+                // Energy cost for moving
+                this.energy -= 0.2;
+
+                if (target) {
+                    const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                    this.x += Math.cos(angle) * this.speed;
+                    this.y += Math.sin(angle) * this.speed;
+                } else { // Random movement
+                    this.x += (Math.random() - 0.5) * this.speed * 2;
+                    this.y += (Math.random() - 0.5) * this.speed * 2;
+                }
+
+                // World boundaries
+                this.x = Math.max(0, Math.min(canvasWidth, this.x));
+                this.y = Math.max(0, Math.min(canvasHeight, this.y));
+            }
+
+            eat(target) {
+                if (this.species === 'herbivore') {
+                    this.energy += 20;
+                    plants = plants.filter(p => p !== target);
+                } else { // carnivore
+                    this.energy += 50;
+                    creatures = creatures.filter(c => c !== target);
+                }
+            }
+
+            reproduce() {
+                if (this.energy > this.reproductionThreshold) {
+                    this.energy /= 2;
+                    const child = new Creature(this.x, this.y, this.species);
+                    creatures.push(child);
+                }
+            }
+
+            update() {
+                this.age++;
+                this.energy -= 0.1; // Base energy loss
+
+                if (this.energy <= 0 || this.age > 1000) {
+                    // Remove from simulation
+                    creatures = creatures.filter(c => c !== this);
+                    return;
+                }
+
+                let target = null;
+                if (this.species === 'herbivore') {
+                    target = this.findClosest(plants);
+                } else { // carnivore
+                    target = this.findClosest(creatures.filter(c => c.species === 'herbivore'));
+                }
+
+                this.move(target);
+
+                if (target && this.distanceTo(target) < this.size) {
+                    this.eat(target);
+                }
+
+                if (Math.random() < 0.005) { // Small chance to reproduce
+                    this.reproduce();
+                }
+            }
+
+            findClosest(entities) {
+                let closest = null;
+                let minDistance = this.senseRadius;
+                for (const entity of entities) {
+                    const d = this.distanceTo(entity);
+                    if (d < minDistance) {
+                        minDistance = d;
+                        closest = entity;
+                    }
+                }
+                return closest;
+            }
+
+            distanceTo(entity) {
+                return Math.sqrt((this.x - entity.x) ** 2 + (this.y - entity.y) ** 2);
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+        }
+
+        class Plant {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 3;
+                this.color = 'rgba(34, 197, 94, 0.9)'; // Green
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+        }
+
+        // --- Simulation Logic ---
+
+        function init() {
+            creatures = [];
+            plants = [];
+            time = 0;
+            
+            // Clear chart data
+            populationChart.data.labels = [];
+            populationChart.data.datasets[0].data = [];
+            populationChart.data.datasets[1].data = [];
+            populationChart.update();
+
+            const numHerbivores = parseInt(herbivoreSlider.value);
+            const numCarnivores = parseInt(carnivoreSlider.value);
+
+            for (let i = 0; i < numHerbivores; i++) {
+                creatures.push(new Creature(Math.random() * canvasWidth, Math.random() * canvasHeight, 'herbivore'));
+            }
+            for (let i = 0; i < numCarnivores; i++) {
+                creatures.push(new Creature(Math.random() * canvasWidth, Math.random() * canvasHeight, 'carnivore'));
+            }
+            spawnPlants(200); // Initial plants
+        }
+        
+        function spawnPlants(count) {
+            for (let i = 0; i < count; i++) {
+                plants.push(new Plant(Math.random() * canvasWidth, Math.random() * canvasHeight));
+            }
+        }
+
+        function updateChart() {
+            const herbivorePop = creatures.filter(c => c.species === 'herbivore').length;
+            const carnivorePop = creatures.filter(c => c.species === 'carnivore').length;
+            
+            populationChart.data.labels.push(time);
+            populationChart.data.datasets[0].data.push(herbivorePop);
+            populationChart.data.datasets[1].data.push(carnivorePop);
+            
+            // Limit chart data to last 100 points for performance
+            if (populationChart.data.labels.length > 100) {
+                populationChart.data.labels.shift();
+                populationChart.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+
+            populationChart.update('none'); // 'none' for no animation
+        }
+
+        function gameLoop() {
+            if (!simulationRunning) return;
+            
+            time++;
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // Spawn new plants
+            if (Math.random() < parseInt(plantSlider.value) / 100) {
+                spawnPlants(5);
+            }
+
+            // Update and draw plants
+            plants.forEach(p => p.draw());
+
+            // Update and draw creatures
+            creatures.forEach(c => c.update());
+            creatures.forEach(c => c.draw());
+            
+            // Update chart every 10 frames for performance
+            if (time % 10 === 0) {
+                updateChart();
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        startButton.addEventListener('click', () => {
+            if (!simulationRunning) {
+                simulationRunning = true;
+                startButton.disabled = true;
+                pauseButton.disabled = false;
+                herbivoreSlider.disabled = true;
+                carnivoreSlider.disabled = true;
+                plantSlider.disabled = true;
+
+                if (!animationFrameId) { // If it's the very first start
+                    init();
+                }
+                gameLoop();
+            }
+        });
+
+        pauseButton.addEventListener('click', () => {
+            if (simulationRunning) {
+                simulationRunning = false;
+                startButton.disabled = false;
+                pauseButton.disabled = true;
+                cancelAnimationFrame(animationFrameId);
+            }
+        });
+
+        resetButton.addEventListener('click', () => {
+            simulationRunning = false;
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+            
+            startButton.disabled = false;
+            pauseButton.disabled = true;
+            herbivoreSlider.disabled = false;
+            carnivoreSlider.disabled = false;
+            plantSlider.disabled = false;
+
+            init();
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight); // Clear canvas on reset
+            // Redraw initial state
+            plants.forEach(p => p.draw());
+            creatures.forEach(c => c.draw());
+        });
+
+        // Initial setup
+        window.onload = () => {
+            init();
+            // Draw initial state
+            plants.forEach(p => p.draw());
+            creatures.forEach(c => c.draw());
+        };
+
+    </script>
+</body>
+</html>
